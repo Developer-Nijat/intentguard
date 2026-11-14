@@ -1,0 +1,4 @@
+# Keep LF everywhere: bin/intentguard is a POSIX shell script and must not get CRLF on checkout.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.png binary

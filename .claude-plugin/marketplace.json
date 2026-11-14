@@ -1,0 +1,21 @@
+{
+  "name": "intentguard",
+  "owner": {
+    "name": "Developer-Nijat",
+    "url": "https://github.com/Developer-Nijat"
+  },
+  "metadata": {
+    "description": "IntentGuard — remember decisions, protect engineering intent."
+  },
+  "plugins": [
+    {
+      "name": "intentguard",
+      "source": "./",
+      "description": "Captures engineering decisions, tracks constraints, and detects decision conflicts before they become technical debt.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "category": "development",
+      "keywords": ["decisions", "constraints", "architecture", "adr", "guardrails"]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "intentguard",
+  "version": "0.1.0",
+  "description": "Decision & constraint intelligence for AI coding agents: remembers engineering decisions and why they were made, and flags changes that conflict with them.",
+  "author": {
+    "name": "Developer-Nijat",
+    "url": "https://github.com/Developer-Nijat"
+  },
+  "homepage": "https://github.com/Developer-Nijat/intentguard",
+  "repository": "https://github.com/Developer-Nijat/intentguard",
+  "license": "MIT",
+  "keywords": [
+    "decisions",
+    "constraints",
+    "architecture",
+    "adr",
+    "guardrails",
+    "memory"
+  ]
+}

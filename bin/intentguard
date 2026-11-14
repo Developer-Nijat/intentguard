@@ -1,0 +1,3 @@
+#!/bin/sh
+# POSIX launcher so `intentguard` works from the Bash tool once the plugin is enabled.
+exec node "$(dirname "$0")/intentguard.js" "$@"

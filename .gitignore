@@ -1,0 +1,13 @@
+node_modules/
+coverage/
+*.log
+.DS_Store
+
+# IntentGuard's own local state when dogfooding in this repository
+.intentguard/*.db
+.intentguard/*.db-wal
+.intentguard/*.db-shm
+.intentguard/logs/
+
+# Local tool state
+.remember/

@@ -1,0 +1,47 @@
+{
+  "name": "intentguard",
+  "version": "0.1.0",
+  "description": "Decision & constraint intelligence for AI coding agents. A Claude Code plugin that captures engineering decisions, tracks constraints, and detects decision conflicts before they become technical debt.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Developer-Nijat",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Developer-Nijat/intentguard.git"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "architecture-decision-records",
+    "adr",
+    "constraints",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "intentguard": "bin/intentguard.js"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    ".claude-plugin",
+    "agents",
+    "bin",
+    "commands",
+    "hooks",
+    "skills",
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "test:accuracy": "node --test tests/accuracy.test.js",
+    "intentguard": "node bin/intentguard.js"
+  }
+}
