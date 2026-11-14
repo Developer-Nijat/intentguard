@@ -212,6 +212,18 @@ test('anything touching the data directory needs approval unless it is a plain r
     ['Remove-Item .intentguard -Recurse -Force', 'powershell'],
     ['Remove-Item * -Recurse -Force', 'powershell'],
     ['Set-Content .intentguard\\config.json "{}"', 'powershell'],
+    // tools that look read-only but can write a file or run a program through a flag
+    ['tree -o .intentguard/config.json'],
+    ['rg --pre ./evil.sh enforcement .intentguard'],
+    ['less .intentguard/config.json'],
+    ['more .intentguard/config.json'],
+    ['sort -o .intentguard/config.json other.json'],
+    ['file -C -m .intentguard/config.json'],
+    ['git diff --output=.intentguard/config.json'],
+    ['git log --output .intentguard/config.json'],
+    ['git show -o .intentguard/config.json HEAD'],
+    ['git diff --ext-diff .intentguard/decisions.json'],
+    ['git -c core.pager=./evil.sh diff .intentguard/decisions.json'],
   ];
   for (const [command, shell] of needsApproval) assert.equal(asks(command, shell), true, command);
 

@@ -234,17 +234,23 @@ export function referencesDataDir(command, shell = 'bash') {
 }
 
 /** Commands that only read. Anything else that touches the data directory needs approval. */
+// Only tools with no way to write a file or run another program, whatever their flags.
+// Deliberately absent: tree (-o), rg (--pre), less/more (shell escapes), file (-C), sort (-o), find, sed, awk.
 const READ_ONLY = new Set([
-  'cat', 'ls', 'dir', 'type', 'head', 'tail', 'less', 'more', 'grep', 'egrep', 'rg', 'findstr', 'wc', 'stat', 'file', 'tree', 'du',
+  'cat', 'ls', 'dir', 'type', 'head', 'tail', 'grep', 'egrep', 'findstr', 'wc', 'stat',
   'get-content', 'gc', 'get-childitem', 'gci', 'get-item', 'gi', 'test-path', 'select-string', 'sls', 'get-filehash', 'resolve-path',
 ]);
 const GIT_READ_OR_RECORD = new Set(['add', 'status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'commit']);
+/** git flags that write a file or run a program: --output=<file>, -o, --ext-diff, --textconv, --exec… */
+const GIT_UNSAFE_FLAG = /^(?:--output(?:=|$)|-o|--ext-diff$|--textconv$|--exec(?:=|$)|--upload-pack|--receive-pack)/;
 
 function isHarmlessToDataDir(argv) {
   if (!argv) return false;
   const tool = baseName(argv[0]).replace(/\.exe$/, '');
   if (READ_ONLY.has(tool)) return true;
-  return tool === 'git' && GIT_READ_OR_RECORD.has((argv[1] ?? '').toLowerCase());
+  // The subcommand must come first (no `git -c …` configuration in front of it).
+  if (tool !== 'git' || !GIT_READ_OR_RECORD.has((argv[1] ?? '').toLowerCase())) return false;
+  return !argv.slice(2).some((arg) => GIT_UNSAFE_FLAG.test(arg));
 }
 
 /** `git clean -x` / `-X` removes ignored files — which is exactly where the database lives. */
