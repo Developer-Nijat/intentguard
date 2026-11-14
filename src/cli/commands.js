@@ -637,6 +637,11 @@ function exportCommand(env) {
     const serialized = `${JSON.stringify(document, null, 2)}\n`;
     if (values.stdout) return env.out(serialized.trimEnd());
     const target = values.out ? path.resolve(env.cwd, values.out) : path.join(dataDir(ctx.root), EXPORT_FILE);
+    // Never let an export overwrite the configuration or the database.
+    const inside = toRelative(ctx.root, target, env.cwd);
+    if (inside && inside.toLowerCase().startsWith(`${DATA_DIR}/`) && inside.toLowerCase() !== `${DATA_DIR}/${EXPORT_FILE}`) {
+      throw new UsageError(`refusing to write an export over IntentGuard's own files (${inside}). Use ${DATA_DIR}/${EXPORT_FILE} or a path outside ${DATA_DIR}/.`);
+    }
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, serialized);
     emit(env, values, { file: target, decisions: document.decisions.length }, `Exported ${document.decisions.length} decision(s) to ${target}`);

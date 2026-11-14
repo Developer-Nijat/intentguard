@@ -51,15 +51,17 @@ All five hooks run `node bin/intentguard.js hook <event>` with the event payload
 
 ### Self-protection
 
-`PreToolUse` checks three things before it looks at any decision, and answers `permissionDecision: "ask"` in every enforcement mode:
+`PreToolUse` looks at IntentGuard's own state before it looks at any decision (`src/hooks/self-guard.js`), and answers `permissionDecision: "ask"` in every enforcement mode for:
 
 - **Edits to `.intentguard/`** through a file tool — the configuration and records decide what is enforced.
-- **CLI commands that weaken protection**: `resolve`, `exception add`, `deprecate`, `purge`, `update`, `supersede`, `constraint remove`, and `init --enforcement`. Read-only and strengthening commands (`why`, `list`, `check`, `add`, `exception revoke`…) pass through.
-- **Shell commands that write to or delete `.intentguard/`** (`rm`, redirection, `sed`, `sqlite3`, `Remove-Item`, `Set-Content`…).
+- **CLI actions that weaken protection**: `resolve`, `exception add`, `deprecate`, `purge`, `update`, `supersede`, `constraint remove`, `review --keep` and `init --enforcement`. Read-only and strengthening commands (`why`, `list`, `check`, `add`, `exception revoke`…) pass through.
+- **Shell commands that touch `.intentguard/`** and are not a plain read. This is an allowlist, not a denylist: a single simple `cat`, `ls`, `grep`, `git add`/`diff`/`status` and the like are let through; everything else that names the directory — or uses a glob that could expand to it, or runs `git clean -x` — needs approval.
 
-IntentGuard's own CLI calls are exempt from command-pattern matching, because recording a rule necessarily mentions what it forbids (`--command-pattern "npm install redux"`). That exemption covers only a single, simple invocation: a command with unquoted `;`, `&`, `|`, redirection, a newline, command substitution, or unbalanced quotes is evaluated in full like any other.
+Shell commands are judged by **tokenising them as the shell would**, with separate rules for Bash and PowerShell, never by pattern-matching the raw string. A command counts as a call of IntentGuard's CLI only if it parses as one simple command whose words are all known: no unquoted separator, pipe, redirection, grouping or glob, no substitution or variable expansion, balanced quotes. The subcommand is then read from the parsed arguments, so `intentguard "resolve"` and `intentguard res""olve` are seen for what they are. A plain, non-weakening CLI call is exempt from command-pattern matching — recording a rule necessarily quotes what it forbids (`--command-pattern "npm install redux"`). Anything that does not parse cleanly fails closed: it is evaluated in full like any other command, and scanned for weakening actions after quote removal.
 
-Scope matching ignores case on Windows and macOS, where the filesystem does, so re-casing a path cannot step around a scope.
+File paths are resolved to where they really point before matching — symlinks, junctions and Windows 8.3 short names via `realpath`, and on Windows trailing dots/spaces and `name:stream` suffixes are stripped — so an alternative spelling cannot step around a scope or around the protection of `.intentguard/`. Scope matching ignores case on Windows and macOS, where the filesystem does.
+
+This raises the bar for a sloppy or over-eager agent. It is not a sandbox: a script or an interpreter one-liner that never names the directory can still do anything.
 
 ### Why warnings do not repeat
 

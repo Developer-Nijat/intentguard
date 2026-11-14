@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { recordDecision, rejectAlternative, resolveConflict } from '../src/core/decision-engine.js';
-import { isOwnCliOnly } from '../src/hooks/handlers.js';
+import { isOwnCliOnly } from '../src/hooks/self-guard.js';
 import { HOOK_EVENTS, runHook } from '../src/hooks/index.js';
 import { GENERATED, MONGO, RABBIT, makeProject, meta, runBin, tempDir } from './helpers.js';
 

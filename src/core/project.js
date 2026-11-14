@@ -96,8 +96,48 @@ export function saveConfig(root, config) {
 }
 
 /**
+ * Windows accepts several spellings of one file: trailing dots and spaces are
+ * ignored ("config.json." ), and "name:stream" addresses an alternate data
+ * stream of "name". Reduce a path to the spelling the filesystem will use.
+ */
+export function canonicalWindowsPath(absolute) {
+  const { root } = path.win32.parse(absolute);
+  const parts = absolute
+    .slice(root.length)
+    .split(/[\\/]+/)
+    .map((part) => part.split(':')[0].replace(/[. ]+$/, ''))
+    .filter(Boolean);
+  return path.win32.join(root, ...parts);
+}
+
+/**
+ * The real location of a path: symlinks, junctions and Windows 8.3 short names
+ * resolved. For a path that does not exist yet, the deepest existing ancestor
+ * is resolved and the rest appended.
+ */
+export function realPath(absolute) {
+  const pending = [];
+  let current = absolute;
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native(current);
+      return pending.length ? path.join(real, ...pending.reverse()) : real;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return absolute;
+      pending.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+/**
  * Convert an absolute or relative path into a forward-slash path relative to
  * the project root. Returns null for paths outside the project.
+ *
+ * The path is resolved to where it really points first, so an alternative
+ * spelling of a file (a symlink, a short name, a trailing dot) cannot step
+ * around a scope or around the protection of `.intentguard/`.
  */
 export function toRelative(root, filePath, cwd = root) {
   if (typeof filePath !== 'string' || !filePath.trim()) return null;
@@ -106,8 +146,9 @@ export function toRelative(root, filePath, cwd = root) {
   if (process.platform === 'win32' && /^\/[a-zA-Z]\//.test(candidate)) {
     candidate = `${candidate[1]}:${candidate.slice(2)}`;
   }
-  const absolute = path.resolve(cwd || root, candidate);
-  const relative = path.relative(root, absolute);
+  let absolute = path.resolve(cwd || root, candidate);
+  if (process.platform === 'win32') absolute = canonicalWindowsPath(absolute);
+  const relative = path.relative(realPath(path.resolve(root)), realPath(absolute));
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
   return normalizePath(relative);
 }

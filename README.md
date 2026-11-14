@@ -199,7 +199,7 @@ Hook cost, measured on Windows 11 with Node 22: 65–80 ms per hook call, of whi
 
 - Hooks cannot understand intent. A constraint with no detector is only as good as Claude's reading of it.
 - Detection sees the text being written, not the program: it does not resolve imports, types or call graphs.
-- Shell commands are matched as strings; a determined script can do anything.
+- Shell commands are tokenised and matched as text, not executed in a sandbox: a script, an interpreter one-liner or an indirect command (`find . -delete`, `rm -rf .`) can still do anything, including to `.intentguard/` itself.
 - IntentGuard is a guard rail for a cooperative agent and an honest developer, not a security boundary.
 
 ## Development
