@@ -11,3 +11,6 @@ coverage/
 
 # Local tool state
 .remember/
+
+# Launch posts and other marketing drafts
+marketing/
