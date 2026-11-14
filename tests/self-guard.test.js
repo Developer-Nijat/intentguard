@@ -224,6 +224,13 @@ test('anything touching the data directory needs approval unless it is a plain r
     ['git show -o .intentguard/config.json HEAD'],
     ['git diff --ext-diff .intentguard/decisions.json'],
     ['git -c core.pager=./evil.sh diff .intentguard/decisions.json'],
+    // git abbreviates long options and runs configured programs, so only flag-less add/status are trusted
+    ['git diff --outp=.intentguard/config.json'],
+    ['git diff --ext .intentguard/decisions.json'],
+    ['git diff .intentguard/decisions.json'],
+    ['git log -p .intentguard/decisions.json'],
+    ['git commit .intentguard/decisions.json -m x'],
+    ['git add --pathspec-from-file=x .intentguard'],
   ];
   for (const [command, shell] of needsApproval) assert.equal(asks(command, shell), true, command);
 
@@ -232,7 +239,7 @@ test('anything touching the data directory needs approval unless it is a plain r
     ['ls -la .intentguard'],
     ['grep -r enforcement .intentguard'],
     ['git add .intentguard/decisions.json'],
-    ['git diff .intentguard/decisions.json'],
+    ['git status .intentguard'],
     ['git clean -fd'],
     ['rm -rf dist'],
     ['npm test'],

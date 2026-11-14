@@ -12,7 +12,7 @@
       "name": "intentguard",
       "source": "./",
       "description": "Captures engineering decisions, tracks constraints, and detects decision conflicts before they become technical debt.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "license": "MIT",
       "category": "development",
       "keywords": ["decisions", "constraints", "architecture", "adr", "guardrails"]

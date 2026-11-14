@@ -240,17 +240,17 @@ const READ_ONLY = new Set([
   'cat', 'ls', 'dir', 'type', 'head', 'tail', 'grep', 'egrep', 'findstr', 'wc', 'stat',
   'get-content', 'gc', 'get-childitem', 'gci', 'get-item', 'gi', 'test-path', 'select-string', 'sls', 'get-filehash', 'resolve-path',
 ]);
-const GIT_READ_OR_RECORD = new Set(['add', 'status', 'diff', 'log', 'show', 'ls-files', 'check-ignore', 'blame', 'commit']);
-/** git flags that write a file or run a program: --output=<file>, -o, --ext-diff, --textconv, --exec… */
-const GIT_UNSAFE_FLAG = /^(?:--output(?:=|$)|-o|--ext-diff$|--textconv$|--exec(?:=|$)|--upload-pack|--receive-pack)/;
+/** git subcommands that neither write the working tree nor run diff drivers, pagers or hooks. */
+const GIT_PLAIN = new Set(['add', 'status', 'ls-files', 'check-ignore']);
 
 function isHarmlessToDataDir(argv) {
   if (!argv) return false;
   const tool = baseName(argv[0]).replace(/\.exe$/, '');
   if (READ_ONLY.has(tool)) return true;
-  // The subcommand must come first (no `git -c …` configuration in front of it).
-  if (tool !== 'git' || !GIT_READ_OR_RECORD.has((argv[1] ?? '').toLowerCase())) return false;
-  return !argv.slice(2).some((arg) => GIT_UNSAFE_FLAG.test(arg));
+  // git accepts abbreviated long options and can run programs through configuration, so no flag
+  // list is trustworthy. Allow only these subcommands, written first, with plain path arguments.
+  if (tool !== 'git' || !GIT_PLAIN.has((argv[1] ?? '').toLowerCase())) return false;
+  return !argv.slice(2).some((arg) => arg.startsWith('-'));
 }
 
 /** `git clean -x` / `-X` removes ignored files — which is exactly where the database lives. */
