@@ -59,6 +59,14 @@ All five hooks run `node bin/intentguard.js hook <event>` with the event payload
 
 Shell commands are judged by **tokenising them as the shell would**, with separate rules for Bash and PowerShell, never by pattern-matching the raw string. A command counts as a call of IntentGuard's CLI only if it parses as one simple command whose words are all known: no unquoted separator, pipe, redirection, grouping or glob, no substitution or variable expansion, balanced quotes. The subcommand is then read from the parsed arguments, so `intentguard "resolve"` and `intentguard res""olve` are seen for what they are. A plain, non-weakening CLI call is exempt from command-pattern matching — recording a rule necessarily quotes what it forbids (`--command-pattern "npm install redux"`). Anything that does not parse cleanly fails closed: it is evaluated in full like any other command, and scanned for weakening actions after quote removal.
 
+Three further rules keep the two parsers — ours and the real shell's — from disagreeing:
+
+- **PowerShell** also accepts typographic quotes (`“ ” ‘ ’`) and dashes as syntax and gives `,` `@` `#` meanings of their own. A PowerShell command containing any of them is not treated as a simple command.
+- **The CLI is identified by location, not by name.** A bare `intentguard` is the launcher on PATH; a word with a path counts only if it resolves into this plugin's own `bin/` directory. A file elsewhere that happens to be called `intentguard.js` is just another script.
+- **The Windows `.cmd` launcher** hands its arguments to `cmd.exe`, which parses them a second time. A call that goes through it (an explicit `intentguard.cmd`, or the bare name in PowerShell) with an argument containing a cmd metacharacter (`" & | < > ^ % !`) is not treated as a CLI call. `node …/bin/intentguard.js`, which the plugin's own commands use, involves no `cmd.exe`.
+
+The CLI closes its own write path as well: `export --out` refuses to write inside any `.intentguard/` directory except as `decisions.json`, and refuses to overwrite an existing file that is not itself an IntentGuard export.
+
 File paths are resolved to where they really point before matching — symlinks, junctions and Windows 8.3 short names via `realpath`, and on Windows trailing dots/spaces and `name:stream` suffixes are stripped — so an alternative spelling cannot step around a scope or around the protection of `.intentguard/`. Scope matching ignores case on Windows and macOS, where the filesystem does.
 
 This raises the bar for a sloppy or over-eager agent. It is not a sandbox: a script or an interpreter one-liner that never names the directory can still do anything.

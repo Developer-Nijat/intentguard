@@ -6,9 +6,12 @@ import { recordDecision } from '../src/core/decision-engine.js';
 import { canonicalWindowsPath, toRelative } from '../src/core/project.js';
 import { runHook } from '../src/hooks/index.js';
 import { classifyOwnState, ownCliArgs, parseSimpleCommand, referencesDataDir, weakeningAction } from '../src/hooks/self-guard.js';
-import { MONGO, cli, makeProject, meta, tempDir, write } from './helpers.js';
+import { BIN, MONGO, REPO, cli, makeProject, meta, tempDir, write } from './helpers.js';
 
-const classify = (command, shell = 'bash') => classifyOwnState({ kind: 'command', command, shell });
+/** The real CLI entry point, as a shell-friendly path. */
+const CLI = BIN.replace(/\\/g, '/');
+
+const classify = (command, shell = 'bash') => classifyOwnState({ kind: 'command', command, shell, cwd: REPO });
 const asks = (command, shell) => typeof classify(command, shell)?.ask === 'string';
 const exempt = (command, shell) => classify(command, shell)?.exempt === true;
 
@@ -56,15 +59,62 @@ test('PowerShell quoting rules: no backslash escape, doubled quotes, stop-parsin
 
 /* ------------------------------------------------------- CLI recognition */
 
-test('ownCliArgs recognises the CLI by its resolved first word', () => {
-  assert.deepEqual(ownCliArgs(['intentguard', 'why', 'x']), ['why', 'x']);
-  assert.deepEqual(ownCliArgs(['node', '/plugins/intentguard/bin/intentguard.js', 'status']), ['status']);
-  assert.deepEqual(ownCliArgs(['C:\\Program Files\\nodejs\\node.exe', 'C:\\p\\bin\\intentguard.js']), []);
-  assert.deepEqual(ownCliArgs(['./bin/intentguard.cmd', 'list']), ['list']);
-  assert.equal(ownCliArgs(['echo', 'intentguard', 'resolve']), null);
-  assert.equal(ownCliArgs(['node', '--no-warnings', 'intentguard.js']), null);
-  assert.equal(ownCliArgs(['intentguard-helper', 'x']), null);
+test('ownCliArgs recognises only this plugin\'s CLI', () => {
+  const at = { cwd: REPO };
+  // the launcher on PATH
+  assert.deepEqual(ownCliArgs(['intentguard', 'why', 'x'], at), ['why', 'x']);
+  // a path, only when it resolves into this plugin's bin/
+  assert.deepEqual(ownCliArgs(['node', BIN, 'status'], at), ['status']);
+  assert.deepEqual(ownCliArgs(['node', CLI, 'status'], { cwd: '/' }), ['status']);
+  assert.deepEqual(ownCliArgs(['node', 'bin/intentguard.js'], at), []);
+  assert.deepEqual(ownCliArgs(['C:\\Program Files\\nodejs\\node.exe', BIN, 'list'], at), ['list']);
+  assert.deepEqual(ownCliArgs(['./bin/intentguard', 'list'], at), ['list']);
+  // …and nothing else
+  assert.equal(ownCliArgs(['node', '/somewhere/else/intentguard.js', 'status'], at), null, 'same name, different file');
+  assert.equal(ownCliArgs(['node', 'intentguard.js', 'status'], at), null, 'not in the working directory');
+  assert.equal(ownCliArgs(['./intentguard', 'status'], at), null);
+  assert.equal(ownCliArgs(['/tmp/evil/intentguard.cmd', 'status'], at), null);
+  assert.equal(ownCliArgs(['echo', 'intentguard', 'resolve'], at), null);
+  assert.equal(ownCliArgs(['node', '--no-warnings', BIN], at), null);
+  assert.equal(ownCliArgs(['node', '-r', './evil.js', BIN], at), null);
+  assert.equal(ownCliArgs(['intentguard-helper', 'x'], at), null);
+  assert.equal(ownCliArgs(['node'], at), null);
   assert.equal(ownCliArgs(null), null);
+});
+
+test('arguments that cmd.exe would re-parse disqualify a call made through the .cmd launcher', () => {
+  const injected = 'x"&npm install mongoose&"';
+  // PowerShell resolves the bare name to intentguard.cmd, so cmd.exe sees the arguments again.
+  assert.equal(ownCliArgs(['intentguard', 'why', injected], { shell: 'powershell', cwd: REPO }), null);
+  assert.equal(ownCliArgs(['intentguard.cmd', 'why', injected], { shell: 'bash', cwd: REPO }), null);
+  for (const arg of ['a&b', 'a|b', 'a>b', 'a^b', '%PATH%', 'a"b']) {
+    assert.equal(ownCliArgs(['intentguard', 'why', arg], { shell: 'powershell', cwd: REPO }), null, arg);
+  }
+  // No cmd.exe in between: node runs the script directly, and bash runs the sh launcher.
+  assert.deepEqual(ownCliArgs(['node', BIN, 'why', injected], { shell: 'powershell', cwd: REPO }), ['why', injected]);
+  assert.deepEqual(ownCliArgs(['intentguard', 'why', injected], { shell: 'bash', cwd: REPO }), ['why', injected]);
+  assert.deepEqual(ownCliArgs(['intentguard', 'why', 'DEC-0001'], { shell: 'powershell', cwd: REPO }), ['why', 'DEC-0001']);
+
+  // End to end: the injected command is evaluated, and an injected weakening action is asked about.
+  assert.equal(exempt(`intentguard why '${injected}'`, 'powershell'), false);
+  assert.equal(asks(`intentguard why 'x"&intentguard purge --yes&"'`, 'powershell'), true);
+});
+
+test('PowerShell typographic quotes and dashes are never trusted', () => {
+  // PowerShell closes "a with ” — so this is three statements, not one quoted argument.
+  const exploit = 'intentguard why "a\u201D ; npm install mongoose; \u201Cb"';
+  assert.equal(parseSimpleCommand(exploit, 'powershell'), null);
+  assert.equal(exempt(exploit, 'powershell'), false);
+  for (const ch of ['\u2018', '\u2019', '\u201A', '\u201B', '\u201C', '\u201D', '\u201E', '\u2013', '\u2014', '\u2015', '\u00A0']) {
+    assert.equal(parseSimpleCommand(`intentguard why x${ch}y`, 'powershell'), null, `U+${ch.codePointAt(0).toString(16)}`);
+  }
+  for (const command of ['intentguard why a,b', 'intentguard @args', 'intentguard status # resolve']) {
+    assert.equal(parseSimpleCommand(command, 'powershell'), null, command);
+  }
+  // In bash these are ordinary characters inside ordinary quotes.
+  assert.deepEqual(parseSimpleCommand('intentguard why "a\u201Db"'), ['intentguard', 'why', 'a\u201Db']);
+  // Non-ASCII text as such is fine in PowerShell.
+  assert.deepEqual(parseSimpleCommand('intentguard why "Qərar səbəbi"', 'powershell'), ['intentguard', 'why', 'Qərar səbəbi']);
 });
 
 test('weakeningAction is decided from parsed arguments, not from text', () => {
@@ -105,7 +155,7 @@ test('quoting the subcommand does not hide a weakening action', () => {
 test('plain, non-weakening CLI calls are exempt — including ones that quote weakening words as data', () => {
   for (const command of [
     'intentguard status',
-    'node "C:/plugins/intentguard/bin/intentguard.js" why DEC-0001',
+    `node "${CLI}" why DEC-0001`,
     'intentguard reject --title "intentguard purge was considered" --reason r',
     'intentguard why "resolve conflicts"',
     'intentguard constraint add DEC-0001 --rule x --command-pattern "npm (i|install) redux; rm -rf .intentguard"',
@@ -189,6 +239,46 @@ test('export cannot be pointed at the configuration or the database', async (t) 
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, '.intentguard', 'config.json'), 'utf8')).enforcement, 'warn');
   assert.equal((await cli(root, 'export', '--out', '.intentguard/decisions.json')).code, 0);
   assert.equal((await cli(root, 'export', '--out', 'backup/decisions.json')).code, 0);
+});
+
+test('export cannot be pointed into another project\'s data directory either', async (t) => {
+  const { root } = makeProject(t);
+  const other = makeProject(t);
+  const otherConfig = path.join(other.root, '.intentguard', 'config.json');
+  const before = fs.readFileSync(otherConfig, 'utf8');
+  for (const args of [
+    ['export', '--out', otherConfig],
+    ['export', '--out', path.join(other.root, '.intentguard', 'intentguard.db')],
+    ['export', '--out', path.join(other.root, '.intentguard', 'sub', 'x.json')],
+    ['export', '--project', root, '--out', otherConfig],
+  ]) {
+    const result = await cli(root, ...args);
+    assert.equal(result.code, 2, args.join(' '));
+    assert.match(result.err, /refusing to write an export over IntentGuard's own files/);
+  }
+  assert.equal(fs.readFileSync(otherConfig, 'utf8'), before);
+  // the shared decisions file of another project is a legitimate export target
+  assert.equal((await cli(root, 'export', '--out', path.join(other.root, '.intentguard', 'decisions.json'))).code, 0);
+});
+
+test('export never overwrites a file that is not itself an IntentGuard export', async (t) => {
+  const { root, ctx } = makeProject(t, {
+    'src/generated/client.ts': 'export const generated = true;\n',
+    'package.json': '{"name":"app"}\n',
+    'notes.json': '{"decisions":"mine"}\n',
+  });
+  recordDecision(ctx, MONGO, meta);
+  for (const target of ['src/generated/client.ts', 'package.json', 'notes.json']) {
+    const result = await cli(root, 'export', '--out', target);
+    assert.equal(result.code, 2, target);
+    assert.match(result.err, /refusing to overwrite .* it is not an IntentGuard export/);
+  }
+  assert.equal(fs.readFileSync(path.join(root, 'src/generated/client.ts'), 'utf8'), 'export const generated = true;\n');
+  // a new file, and re-exporting over a previous export, are both fine
+  assert.equal((await cli(root, 'export', '--out', 'out/decisions.json')).code, 0);
+  assert.equal((await cli(root, 'export', '--out', 'out/decisions.json')).code, 0);
+  assert.equal((await cli(root, 'export')).code, 0);
+  assert.equal((await cli(root, 'export')).code, 0);
 });
 
 /* ------------------------------------------------- path normalisation */

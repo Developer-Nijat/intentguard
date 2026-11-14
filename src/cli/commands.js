@@ -27,15 +27,17 @@ import { reviewDecisions } from '../core/drift.js';
 import {
   DATA_DIR,
   EXPORT_FILE,
+  canonicalWindowsPath,
   dataDir,
   dbPath,
   findGitRoot,
   findProjectRoot,
   initProjectFiles,
+  realPath,
   toRelative,
 } from '../core/project.js';
 import { findRelevant } from '../core/relevance.js';
-import { exportData, importData } from '../core/transfer.js';
+import { EXPORT_FORMAT, exportData, importData } from '../core/transfer.js';
 import {
   DECISION_STATUSES,
   ENFORCEMENTS,
@@ -59,6 +61,9 @@ import {
   verdictText,
 } from './format.js';
 import { EXIT, UsageError, requireRoot } from './index.js';
+
+/** A UTF-8 byte-order mark at the start of a file (PowerShell likes to add one). */
+const LEADING_BOM = /^\uFEFF/;
 
 const COMMON = {
   json: { type: 'boolean' },
@@ -100,7 +105,7 @@ function readJsonInput(env, source) {
     throw new UsageError(`cannot read ${source === '-' ? 'stdin' : source}: ${error.message}`);
   }
   try {
-    return JSON.parse(raw.replace(/^﻿/, ''));
+    return JSON.parse(raw.replace(LEADING_BOM, ''));
   } catch (error) {
     throw new UsageError(`${source === '-' ? 'stdin' : source} is not valid JSON: ${error.message}`);
   }
@@ -630,6 +635,32 @@ function history(env) {
 
 /* ------------------------------------------------------------------- data */
 
+/**
+ * `export --out` is a file write, so it must not become a way around the
+ * guards: it may not land inside any .intentguard/ directory (other than as
+ * the shared decisions file), and it may not overwrite a file that is not
+ * itself an IntentGuard export.
+ */
+function assertSafeExportTarget(target) {
+  const resolved = realPath(process.platform === 'win32' ? canonicalWindowsPath(target) : target);
+  const segments = resolved.split(/[\\/]+/).map((segment) => segment.toLowerCase());
+  const dataDirAt = segments.lastIndexOf(DATA_DIR);
+  const isSharedFile = dataDirAt === segments.length - 2 && segments[segments.length - 1] === EXPORT_FILE;
+  if (dataDirAt !== -1 && !isSharedFile) {
+    throw new UsageError(`refusing to write an export over IntentGuard's own files (${resolved}). Use ${DATA_DIR}/${EXPORT_FILE} or a path outside ${DATA_DIR}/.`);
+  }
+  if (!fs.existsSync(resolved)) return;
+  let existing = null;
+  try {
+    existing = JSON.parse(fs.readFileSync(resolved, 'utf8').replace(LEADING_BOM, ''));
+  } catch {
+    existing = null;
+  }
+  if (existing?.format !== EXPORT_FORMAT) {
+    throw new UsageError(`refusing to overwrite ${resolved}: it is not an IntentGuard export. Choose another path or remove the file first.`);
+  }
+}
+
 function exportCommand(env) {
   const { values } = parse(env.args, { out: one, stdout: flag, full: flag });
   return withProject(env, values, (ctx) => {
@@ -637,11 +668,7 @@ function exportCommand(env) {
     const serialized = `${JSON.stringify(document, null, 2)}\n`;
     if (values.stdout) return env.out(serialized.trimEnd());
     const target = values.out ? path.resolve(env.cwd, values.out) : path.join(dataDir(ctx.root), EXPORT_FILE);
-    // Never let an export overwrite the configuration or the database.
-    const inside = toRelative(ctx.root, target, env.cwd);
-    if (inside && inside.toLowerCase().startsWith(`${DATA_DIR}/`) && inside.toLowerCase() !== `${DATA_DIR}/${EXPORT_FILE}`) {
-      throw new UsageError(`refusing to write an export over IntentGuard's own files (${inside}). Use ${DATA_DIR}/${EXPORT_FILE} or a path outside ${DATA_DIR}/.`);
-    }
+    assertSafeExportTarget(target);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, serialized);
     emit(env, values, { file: target, decisions: document.decisions.length }, `Exported ${document.decisions.length} decision(s) to ${target}`);

@@ -62,7 +62,7 @@ Without `--confirmed`, a decision is saved as **proposed** and is not enforced.
 
 | Command | |
 | --- | --- |
-| `intentguard export [--out FILE] [--stdout] [--full]` | Decisions as JSON, by default to `.intentguard/decisions.json`. `--full` adds conflicts and history. |
+| `intentguard export [--out FILE] [--stdout] [--full]` | Decisions as JSON, by default to `.intentguard/decisions.json`. `--full` adds conflicts and history. `--out` will not overwrite a file that is not an IntentGuard export, nor write anywhere else inside a `.intentguard/` directory. |
 | `intentguard import <FILE>` | Adds decisions that do not exist yet. Never overwrites. |
 | `intentguard purge --yes` | Delete `.intentguard/` entirely. |
 

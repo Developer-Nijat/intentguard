@@ -83,7 +83,7 @@ export function describeToolCall(ctx, input) {
       return { kind: 'file', path: file(args.notebook_path), segments: [{ startLine: null, text: text(args.new_source) }] };
     case 'Bash':
     case 'PowerShell':
-      return { kind: 'command', command: text(args.command), shell: tool === 'PowerShell' ? 'powershell' : 'bash' };
+      return { kind: 'command', command: text(args.command), shell: tool === 'PowerShell' ? 'powershell' : 'bash', cwd: input.cwd || ctx.root };
     default:
       return null;
   }

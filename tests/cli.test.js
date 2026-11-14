@@ -93,7 +93,7 @@ test('add without --confirmed stores a proposal and says how to confirm it', asy
 
 test('add --input reads JSON (with a UTF-8 BOM) including nested records', async (t) => {
   const { root } = makeProject(t, { 'docs/architecture.md': '# Architecture\n' });
-  const file = write(root, 'decision.json', `﻿${JSON.stringify(MONGO)}`);
+  const file = write(root, 'decision.json', `\uFEFF${JSON.stringify(MONGO)}`);
   const result = await cli(root, 'add', '--input', file, '--confirmed');
   assert.equal(result.code, EXIT.ok, result.err);
   assert.match(result.out, /EVD-0001 file: docs\/architecture\.md \(section 3\) — verified/);

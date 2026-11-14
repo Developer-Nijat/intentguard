@@ -4,7 +4,10 @@ import { test } from 'node:test';
 import { recordDecision, rejectAlternative, resolveConflict } from '../src/core/decision-engine.js';
 import { isOwnCliOnly } from '../src/hooks/self-guard.js';
 import { HOOK_EVENTS, runHook } from '../src/hooks/index.js';
-import { GENERATED, MONGO, RABBIT, makeProject, meta, runBin, tempDir } from './helpers.js';
+import { BIN, GENERATED, MONGO, RABBIT, REPO, makeProject, meta, runBin, tempDir } from './helpers.js';
+
+/** The real CLI entry point, as a shell-friendly path. */
+const CLI = BIN.replace(/\\/g, '/');
 
 const IMPORT = "import { MongoClient } from 'mongodb';";
 const contextOf = (output) => output?.hookSpecificOutput?.additionalContext ?? '';
@@ -257,10 +260,12 @@ test('recording a rule with the IntentGuard CLI is not itself flagged', async (t
   const run = (command, session) => runHook('pre-tool-use', { session_id: session, cwd: root, tool_name: 'Bash', tool_input: { command } });
   const own = [
     'intentguard constraint add DEC-0001 --rule "x" --command-pattern "npm install mongoose"',
-    'node "C:/Users/me/.claude/plugins/cache/intentguard/bin/intentguard.js" reject --title "npm install mongodb in web" --reason r',
-    "node '/home/me/plugins/intentguard/bin/intentguard.js' why npm install mongoose",
+    `node "${CLI}" reject --title "npm install mongodb in web" --reason r`,
+    `node '${CLI}' why npm install mongoose`,
   ];
   for (const [index, command] of own.entries()) assert.equal(await run(command, `own-${index}`), null, command);
+  // a file that merely shares the CLI's name, somewhere else, is just another script
+  assert.ok(await run('node "/somewhere/else/intentguard.js" why npm install mongoose', 'impostor'));
   // a regex alternation inside quotes is an argument, not a pipe
   assert.equal(await run('intentguard reject --title "npm (i|install) mongoose; in web" --reason r', 'own-quoted'), null);
   // …but merely mentioning the tool does not launder a real command
@@ -295,8 +300,9 @@ test('isOwnCliOnly accepts only a single simple invocation', () => {
     "intentguard add --title 'a; b && c | d' --decision d --reason r",
     'intentguard constraint add DEC-1 --rule x --pattern "from [\'\\"]redux[\'\\"]"',
   ]) {
-    assert.equal(isOwnCliOnly(command), true, command);
+    assert.equal(isOwnCliOnly(command, 'bash', REPO), true, command);
   }
+  assert.equal(isOwnCliOnly('node bin/intentguard.js why DEC-0001', 'bash', path.join(REPO, 'tests')), false, 'resolved against the working directory');
   for (const command of ['npm test', 'intentguard status > out.txt', 'intentguard status && ls', 'echo intentguard status', "intentguard why 'a' \"$(id)\""]) {
     assert.equal(isOwnCliOnly(command), false, command);
   }

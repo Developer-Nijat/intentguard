@@ -10,12 +10,18 @@
  * This raises the bar for a sloppy or over-eager agent. It is not a sandbox:
  * a script can still do anything (see "Limits" in the README).
  */
-import { DATA_DIR } from '../core/project.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DATA_DIR, canonicalWindowsPath, realPath } from '../core/project.js';
 import { caseInsensitivePlatform } from '../core/scope-matcher.js';
 
 /** After `$`, these start an expansion or a quoting form; anything else leaves `$` literal. */
 const EXPANSION_UNQUOTED = /[A-Za-z_0-9@*#?\-$!({'"^:]/;
 const EXPANSION_IN_DOUBLE_QUOTES = /[A-Za-z_0-9@*#?\-$!({^:]/;
+/** Smart quotes (U+2018–U+201F), dashes (U+2012–U+2015) and non-ASCII spaces PowerShell treats as syntax; and , @ #. */
+const POWERSHELL_AMBIGUOUS = /[\u2018-\u201F\u2012-\u2015\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF,@#]/;
+/** Characters cmd.exe re-interprets when arguments pass through a .cmd launcher. */
+const CMD_METACHARACTERS = /["&|<>^%!\r\n]/;
 /** Unquoted characters that make a command more than one simple invocation, or expand into unknown words. */
 const UNQUOTED_SPECIAL = /[;&|<>(){}\n\r*?[\]]/;
 
@@ -32,6 +38,9 @@ const UNQUOTED_SPECIAL = /[;&|<>(){}\n\r*?[\]]/;
  */
 export function parseSimpleCommand(command, shell = 'bash') {
   const posix = shell !== 'powershell';
+  // PowerShell also accepts typographic quotes and dashes as syntax, and gives
+  // , @ # a meaning of their own. Rather than mirror all of that, refuse them.
+  if (!posix && POWERSHELL_AMBIGUOUS.test(command)) return null;
   const argv = [];
   let word = '';
   let inWord = false;
@@ -110,17 +119,56 @@ export function parseSimpleCommand(command, shell = 'bash') {
 }
 
 const baseName = (word) => word.split(/[\\/]/).pop().toLowerCase();
-const CLI_NAMES = new Set(['intentguard', 'intentguard.js', 'intentguard.cmd']);
+const LAUNCHERS = new Set(['intentguard', 'intentguard.cmd', 'intentguard.js']);
+
+/** The bin/ directory of this very plugin: the only place a path to the CLI may point. */
+const OWN_BIN_DIR = realPath(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin'));
+
+function samePath(a, b) {
+  return caseInsensitivePlatform() ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/** Does this word, written with a path, name a file in this plugin's own bin/ directory? */
+function pointsIntoOwnBin(word, cwd) {
+  let candidate = word;
+  if (process.platform === 'win32' && /^\/[a-zA-Z]\//.test(candidate)) candidate = `${candidate[1]}:${candidate.slice(2)}`;
+  let absolute = path.resolve(cwd || process.cwd(), candidate);
+  if (process.platform === 'win32') absolute = canonicalWindowsPath(absolute);
+  return samePath(path.dirname(realPath(absolute)), OWN_BIN_DIR);
+}
 
 /**
- * If argv is an invocation of the IntentGuard CLI (`intentguard …` or
- * `node <path>/intentguard.js …`), return the CLI's own arguments; else null.
+ * If argv is an invocation of *this plugin's* CLI, return the CLI's own
+ * arguments; else null.
+ *
+ *   intentguard …                      the launcher, found on PATH
+ *   <path>/intentguard[.js|.cmd] …     only if the path is this plugin's bin/
+ *   node <path>/intentguard.js …       likewise
+ *
+ * A file that merely happens to be called intentguard.js is not the CLI. And
+ * when the call goes through the Windows .cmd launcher, cmd.exe parses the
+ * arguments a second time — so any argument containing a cmd metacharacter
+ * makes the result unknowable, and the call is not recognised.
  */
-export function ownCliArgs(argv) {
+export function ownCliArgs(argv, options = {}) {
   if (!argv?.length) return null;
-  const start = /^node(?:\.exe)?$/.test(baseName(argv[0])) ? 1 : 0;
-  if (argv[start] === undefined || !CLI_NAMES.has(baseName(argv[start]))) return null;
-  return argv.slice(start + 1);
+  const viaNode = /^node(?:\.exe)?$/.test(baseName(argv[0]));
+  const word = argv[viaNode ? 1 : 0];
+  if (word === undefined) return null;
+  const base = baseName(word);
+  const hasPath = /[\\/]/.test(word);
+
+  if (viaNode) {
+    if (base !== 'intentguard.js' || !pointsIntoOwnBin(word, options.cwd)) return null;
+  } else {
+    if (!LAUNCHERS.has(base)) return null;
+    if (hasPath && !pointsIntoOwnBin(word, options.cwd)) return null;
+  }
+
+  const args = argv.slice(viaNode ? 2 : 1);
+  const throughCmd = !viaNode && (base === 'intentguard.cmd' || (base === 'intentguard' && options.shell === 'powershell'));
+  if (throughCmd && args.some((arg) => CMD_METACHARACTERS.test(arg))) return null;
+  return args;
 }
 
 const WEAKENING_SUBCOMMANDS = new Set(['resolve', 'deprecate', 'purge', 'update', 'supersede']);
@@ -224,12 +272,12 @@ export function classifyOwnState(call) {
     };
   }
 
-  const { command, shell } = call;
+  const { command, shell, cwd } = call;
   const weakeningReason = (action) =>
     `IntentGuard: "intentguard ${action.replace(/\s+/g, ' ')}" changes what IntentGuard enforces (resolving conflicts, granting exceptions, altering or retiring decisions). That choice is yours — approve only if this is your decision.`;
 
   const argv = parseSimpleCommand(command, shell);
-  const cliArgs = ownCliArgs(argv);
+  const cliArgs = ownCliArgs(argv, { shell, cwd });
   if (cliArgs) {
     const action = weakeningAction(cliArgs);
     return action ? { ask: weakeningReason(action) } : { exempt: true };
@@ -246,6 +294,6 @@ export function classifyOwnState(call) {
 }
 
 /** For tests and callers that only need the yes/no. */
-export function isOwnCliOnly(command, shell = 'bash') {
-  return ownCliArgs(parseSimpleCommand(command, shell)) !== null;
+export function isOwnCliOnly(command, shell = 'bash', cwd = process.cwd()) {
+  return ownCliArgs(parseSimpleCommand(command, shell), { shell, cwd }) !== null;
 }
