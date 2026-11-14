@@ -6,6 +6,8 @@ IntentGuard is an open-source [Claude Code](https://claude.com/claude-code) plug
 
 It is not general-purpose memory. It is *decision and constraint intelligence* for AI coding agents.
 
+![Claude declines to add a MongoDB import to the frontend, citing decision DEC-0001 and rejected idea ALT-0001, and asks how to proceed](docs/assets/intentguard-demo.png)
+
 ```
 You:     Implement direct HTTP communication between OrderService and NotificationService.
 
