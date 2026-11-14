@@ -49,6 +49,18 @@ All five hooks run `node bin/intentguard.js hook <event>` with the event payload
 | `PostToolUse` | If the tool ran after an `ask`, the approval is remembered for the session. Records touched files. |
 | `Stop` | If a candidate decision was noted, nothing was recorded since, and Claude's last message did not already offer — blocks the stop once with an instruction to ask the developer. Never re-blocks; capped per session. |
 
+### Self-protection
+
+`PreToolUse` checks three things before it looks at any decision, and answers `permissionDecision: "ask"` in every enforcement mode:
+
+- **Edits to `.intentguard/`** through a file tool — the configuration and records decide what is enforced.
+- **CLI commands that weaken protection**: `resolve`, `exception add`, `deprecate`, `purge`, `update`, `supersede`, `constraint remove`, and `init --enforcement`. Read-only and strengthening commands (`why`, `list`, `check`, `add`, `exception revoke`…) pass through.
+- **Shell commands that write to or delete `.intentguard/`** (`rm`, redirection, `sed`, `sqlite3`, `Remove-Item`, `Set-Content`…).
+
+IntentGuard's own CLI calls are exempt from command-pattern matching, because recording a rule necessarily mentions what it forbids (`--command-pattern "npm install redux"`). That exemption covers only a single, simple invocation: a command with unquoted `;`, `&`, `|`, redirection, a newline, command substitution, or unbalanced quotes is evaluated in full like any other.
+
+Scope matching ignores case on Windows and macOS, where the filesystem does, so re-casing a path cannot step around a scope.
+
 ### Why warnings do not repeat
 
 - **Per conflict:** a conflict's identity is a fingerprint of *constraint + file + detector*. Repeat sightings update one record.

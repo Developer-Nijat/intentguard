@@ -111,6 +111,13 @@ export function globToRegExpSource(rawGlob) {
   return `^${source}$`;
 }
 
+/**
+ * Platforms whose default filesystem ignores case. There, "Apps/Web/db.js" and
+ * "apps/web/db.js" are the same file, so scopes must match both spellings —
+ * otherwise changing the case of a path would step around a decision.
+ */
+export const caseInsensitivePlatform = (platform = process.platform) => platform === 'win32' || platform === 'darwin';
+
 const compiledCache = new Map();
 
 /**
@@ -119,7 +126,7 @@ const compiledCache = new Map();
  * @param {{ nocase?: boolean }} [options]
  */
 export function compileScope(globs, options = {}) {
-  const nocase = options.nocase ?? process.platform === 'win32';
+  const nocase = options.nocase ?? caseInsensitivePlatform();
   const list = Array.isArray(globs) ? globs : globs ? [globs] : [];
   const key = `${nocase ? 'i' : 's'}\u0000${list.join('\u0000')}`;
   const cached = compiledCache.get(key);

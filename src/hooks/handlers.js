@@ -8,6 +8,7 @@ import { conflictNotice, governingNotice, promptNotice, sessionSummary } from '.
 import { evaluateCommand, evaluateFile, loadRules, recordFindings } from '../core/conflict-engine.js';
 import { DATA_DIR, toRelative } from '../core/project.js';
 import { findRelevant, looksLikeDecision } from '../core/relevance.js';
+import { caseInsensitivePlatform } from '../core/scope-matcher.js';
 
 const MAX_CONTEXT_CHARS = 8000;
 const SESSION_RETENTION_DAYS = 30;
@@ -91,9 +92,73 @@ export function describeToolCall(ctx, input) {
 /** A command whose first word is the IntentGuard CLI: `intentguard …` or `node "<path>/intentguard.js" …`. */
 const OWN_CLI = /^\s*(?:node(?:\.exe)?\s+)?["']?(?:[^\s"']*[\\/])?intentguard(?:\.js|\.cmd)?["']?\s/i;
 
+/**
+ * True only for a single, simple invocation of the IntentGuard CLI. Recording a
+ * rule mentions the very thing it forbids (`--command-pattern "npm install redux"`),
+ * so such a call must not be flagged — but the exemption must not cover anything
+ * chained after it (`intentguard status && npm install redux`) or substituted
+ * into it (`intentguard why "$(npm install redux)"`).
+ */
+export function isOwnCliOnly(command) {
+  if (!OWN_CLI.test(command)) return false;
+  const withoutSingleQuoted = command.replace(/'[^']*'/g, '');
+  // Command substitution runs even inside double quotes.
+  if (/`|\$\(/.test(withoutSingleQuoted)) return false;
+  const bare = withoutSingleQuoted.replace(/"(?:[^"\\]|\\.)*"/g, '');
+  // Anything left is unquoted: no separators, pipes, redirects, or unbalanced quotes.
+  return !/[;&|<>\n\r"']/.test(bare);
+}
+
+/** CLI commands that reduce what IntentGuard protects. These are the developer's call. */
+const WEAKENING_COMMAND =
+  /intentguard(?:\.js|\.cmd)?["']?\s+(resolve|deprecate|purge|update|supersede|exception\s+add|constraint\s+remove|init\b[^;&|\n]*--enforcement)\b/i;
+const TOUCHES_DATA_DIR = /\.intentguard\b/i;
+const SHELL_WRITE =
+  /(?:^|[\s;&|(])(?:rm|del|erase|rmdir|rd|mv|move|cp|copy|sed|tee|truncate|sqlite3|Remove-Item|Move-Item|Copy-Item|Rename-Item|Set-Content|Add-Content|Clear-Content|Out-File|New-Item)\b|>/i;
+
+const askDeveloper = (reason) => ({
+  hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: reason },
+});
+
+const isOwnDataPath = (relPath) => {
+  const p = caseInsensitivePlatform() ? relPath.toLowerCase() : relPath;
+  return p === DATA_DIR || p.startsWith(`${DATA_DIR}/`);
+};
+
+/**
+ * IntentGuard guards itself: an agent must not be able to switch the guard off,
+ * or settle its own conflicts, without the developer seeing it. Applies in every
+ * enforcement mode — these are decisions, and decisions belong to the developer.
+ */
+function guardOwnState(call) {
+  if (call.kind === 'file') {
+    if (!call.path || !isOwnDataPath(call.path)) return null;
+    return askDeveloper(
+      `IntentGuard: this edits IntentGuard's own data (${call.path}) — its configuration and records decide what is enforced. Approve only if you intend this change.`,
+    );
+  }
+  const weakening = WEAKENING_COMMAND.exec(call.command);
+  if (weakening) {
+    return askDeveloper(
+      `IntentGuard: "intentguard ${weakening[1].replace(/\s+/g, ' ')}" changes what IntentGuard enforces (resolving conflicts, granting exceptions, altering or retiring decisions). That choice is yours — approve only if this is your decision.`,
+    );
+  }
+  if (TOUCHES_DATA_DIR.test(call.command) && SHELL_WRITE.test(call.command) && !isOwnCliOnly(call.command)) {
+    return askDeveloper(
+      `IntentGuard: this command may modify or delete IntentGuard's own data (${DATA_DIR}/). Approve only if you intend this change.`,
+    );
+  }
+  return null;
+}
+
 export function preToolUse(ctx, input) {
   const call = describeToolCall(ctx, input);
   if (!call) return null;
+  if (call.kind === 'command' && !call.command.trim()) return null;
+
+  const guard = guardOwnState(call);
+  if (guard) return guard;
+
   const sessionId = input.session_id;
   const { sessions } = ctx.store;
   const rules = loadRules(ctx);
@@ -101,12 +166,10 @@ export function preToolUse(ctx, input) {
 
   let result;
   if (call.kind === 'file') {
-    if (!call.path || call.path === DATA_DIR || call.path.startsWith(`${DATA_DIR}/`)) return null;
+    if (!call.path) return null;
     result = evaluateFile(ctx, { path: call.path, segments: call.segments, rules });
   } else {
-    // Recording a rule mentions the very thing it forbids ("--command-pattern 'npm install redux'");
-    // IntentGuard's own CLI calls are never treated as violations.
-    if (!call.command.trim() || OWN_CLI.test(call.command)) return null;
+    if (isOwnCliOnly(call.command)) return null;
     result = { ...evaluateCommand(ctx, { command: call.command, rules }), governing: [] };
   }
 

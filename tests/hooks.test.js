@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { recordDecision, rejectAlternative, resolveConflict } from '../src/core/decision-engine.js';
+import { isOwnCliOnly } from '../src/hooks/handlers.js';
 import { HOOK_EVENTS, runHook } from '../src/hooks/index.js';
 import { GENERATED, MONGO, RABBIT, makeProject, meta, runBin, tempDir } from './helpers.js';
 
@@ -260,17 +261,122 @@ test('recording a rule with the IntentGuard CLI is not itself flagged', async (t
     "node '/home/me/plugins/intentguard/bin/intentguard.js' why npm install mongoose",
   ];
   for (const [index, command] of own.entries()) assert.equal(await run(command, `own-${index}`), null, command);
+  // a regex alternation inside quotes is an argument, not a pipe
+  assert.equal(await run('intentguard reject --title "npm (i|install) mongoose; in web" --reason r', 'own-quoted'), null);
   // …but merely mentioning the tool does not launder a real command
   assert.ok(await run('npm install mongoose # intentguard said no', 'evade-1'));
   assert.ok(await run('echo intentguard && npm install mongoose', 'evade-2'));
 });
 
-test('PreToolUse ignores unrelated tools, files outside the project and its own data', async (t) => {
+test('the CLI exemption does not extend to anything chained after or substituted into the command', async (t) => {
+  const { root, ctx } = makeProject(t);
+  recordDecision(ctx, MONGO, meta);
+  const attempts = [
+    'intentguard status && npm install mongoose',
+    'intentguard status; npm install mongoose',
+    'intentguard status || npm install mongoose',
+    'intentguard list | npm install mongoose',
+    'intentguard status\nnpm install mongoose',
+    'intentguard why "$(npm install mongoose)"',
+    'intentguard why `npm install mongoose`',
+    'node "C:/plugins/intentguard/bin/intentguard.js" status & npm install mongoose',
+    'intentguard why "unterminated && npm install mongoose',
+  ];
+  for (const [index, command] of attempts.entries()) {
+    const output = await runHook('pre-tool-use', { session_id: `chain-${index}`, cwd: root, tool_name: 'Bash', tool_input: { command } });
+    assert.match(contextOf(output), /POTENTIAL CONFLICT with DEC-0001/, command);
+  }
+});
+
+test('isOwnCliOnly accepts only a single simple invocation', () => {
+  for (const command of [
+    'intentguard status',
+    'node bin/intentguard.js why DEC-0001',
+    "intentguard add --title 'a; b && c | d' --decision d --reason r",
+    'intentguard constraint add DEC-1 --rule x --pattern "from [\'\\"]redux[\'\\"]"',
+  ]) {
+    assert.equal(isOwnCliOnly(command), true, command);
+  }
+  for (const command of ['npm test', 'intentguard status > out.txt', 'intentguard status && ls', 'echo intentguard status', "intentguard why 'a' \"$(id)\""]) {
+    assert.equal(isOwnCliOnly(command), false, command);
+  }
+});
+
+test('edits to IntentGuard\'s own data need the developer\'s approval in every mode', async (t) => {
+  const { root } = makeProject(t, {}, { enforcement: 'observe' }); // even with no decisions and in observe mode
+  for (const file of ['.intentguard/config.json', '.intentguard/decisions.json', '.intentguard/intentguard.db']) {
+    const output = await runHook('pre-tool-use', writeCall(root, file, '{"enforcement":"observe"}'));
+    assert.equal(output.hookSpecificOutput.permissionDecision, 'ask', file);
+    assert.match(output.hookSpecificOutput.permissionDecisionReason, /edits IntentGuard's own data/);
+  }
+  const edit = await runHook('pre-tool-use', {
+    session_id: 's', cwd: root, tool_name: 'Edit',
+    tool_input: { file_path: '.intentguard/config.json', old_string: '"warn"', new_string: '"observe"' },
+  });
+  assert.equal(edit.hookSpecificOutput.permissionDecision, 'ask');
+});
+
+test('CLI commands that weaken protection need the developer\'s approval; the rest do not', async (t) => {
+  const { root, ctx } = makeProject(t);
+  recordDecision(ctx, MONGO, meta);
+  const run = (command, tool = 'Bash') => runHook('pre-tool-use', { session_id: 's', cwd: root, tool_name: tool, tool_input: { command } });
+  const weakening = [
+    'intentguard resolve CONF-0001 --as false-positive --note "trust me"',
+    'intentguard exception add DEC-0001 --reason "convenient"',
+    'intentguard deprecate DEC-0001',
+    'intentguard purge --yes',
+    'intentguard constraint remove CON-0001',
+    'intentguard update DEC-0001 --scope "nothing/**"',
+    'intentguard supersede DEC-0001 --input new.json --confirmed',
+    'intentguard init --enforcement observe',
+    'node "C:/plugins/intentguard/bin/intentguard.js" resolve CONF-0001 --as kept',
+    'cd apps && intentguard deprecate DEC-0001',
+  ];
+  for (const command of weakening) {
+    const output = await run(command);
+    assert.equal(output?.hookSpecificOutput.permissionDecision, 'ask', command);
+    assert.match(output.hookSpecificOutput.permissionDecisionReason, /That choice is yours/, command);
+  }
+  assert.equal((await run('intentguard deprecate DEC-0001', 'PowerShell')).hookSpecificOutput.permissionDecision, 'ask');
+  for (const command of [
+    'intentguard why DEC-0001',
+    'intentguard list',
+    'intentguard check --dry-run',
+    'intentguard conflicts',
+    'intentguard review',
+    'intentguard init',
+    'intentguard exception revoke EXC-0001',
+    'intentguard add --title t --decision d --reason r',
+  ]) {
+    assert.equal(await run(command), null, command);
+  }
+});
+
+test('shell commands that modify or delete IntentGuard\'s data need approval; reading it does not', async (t) => {
+  const { root } = makeProject(t);
+  const run = (command, tool = 'Bash') => runHook('pre-tool-use', { session_id: 's', cwd: root, tool_name: tool, tool_input: { command } });
+  for (const [command, tool] of [
+    ['rm -rf .intentguard', 'Bash'],
+    ['echo \'{"enforcement":"observe"}\' > .intentguard/config.json', 'Bash'],
+    ["sed -i 's/warn/observe/' .intentguard/config.json", 'Bash'],
+    ['sqlite3 .intentguard/intentguard.db "DELETE FROM constraints"', 'Bash'],
+    ['Remove-Item .intentguard -Recurse -Force', 'PowerShell'],
+    ['Set-Content .intentguard\\config.json "{}"', 'PowerShell'],
+  ]) {
+    const output = await run(command, tool);
+    assert.equal(output?.hookSpecificOutput.permissionDecision, 'ask', command);
+    assert.match(output.hookSpecificOutput.permissionDecisionReason, /may modify or delete IntentGuard's own data/, command);
+  }
+  for (const command of ['cat .intentguard/config.json', 'git add .intentguard/decisions.json', 'ls .intentguard', 'rm -rf dist', 'intentguard import .intentguard/decisions.json']) {
+    assert.equal(await run(command), null, command);
+  }
+});
+
+test('PreToolUse ignores unrelated tools and files outside the project', async (t) => {
   const { root, ctx } = makeProject(t);
   recordDecision(ctx, { title: 'Everything is protected', decision: 'd', reason: 'r', constraints: [{ rule: 'no edits', protect: true }] }, meta);
   assert.equal(await runHook('pre-tool-use', { session_id: 's', cwd: root, tool_name: 'Read', tool_input: { file_path: 'a.js' } }), null);
   assert.equal(await runHook('pre-tool-use', writeCall(root, '../outside/a.js', 'x')), null);
-  assert.equal(await runHook('pre-tool-use', writeCall(root, '.intentguard/config.json', '{}')), null);
   assert.equal(await runHook('pre-tool-use', { session_id: 's', cwd: root, tool_name: 'Write', tool_input: {} }), null);
   assert.ok(await runHook('pre-tool-use', writeCall(root, 'a.js', 'x')));
 });

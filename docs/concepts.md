@@ -146,6 +146,8 @@ Every comparison of a change with the decisions ends in one of four verdicts:
 | `warn` | …is recorded, and Claude is told to stop and ask the developer. The tool call is not blocked. |
 | `enforce` | …is recorded, and the tool call needs the developer's approval in the permission prompt. An approval holds for the rest of the session; it does not resolve the conflict. |
 
+Independently of the mode, actions that weaken protection — resolving a conflict, granting an exception, changing or retiring a decision, removing a constraint, editing `.intentguard/` — always go through the permission prompt. They are decisions, and decisions are the developer's.
+
 The default is `warn`. IntentGuard does not block every inconsistency — a developer moving from RabbitMQ to HTTP is not making a mistake; the old decision simply has to be changed on purpose.
 
 ## Drift

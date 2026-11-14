@@ -100,6 +100,8 @@ In a project that has not run `/intentguard:init`, every hook returns immediatel
 
 Set the project default in `.intentguard/config.json`, or per constraint (`"enforcement": "enforce"`).
 
+**The guard guards itself.** In every mode, anything that would weaken what IntentGuard protects needs your approval in the permission prompt: resolving a conflict, granting an exception, updating, superseding or retiring a decision, removing a constraint, changing the enforcement mode, and any edit to `.intentguard/` itself. Claude can propose these; it cannot quietly do them.
+
 ### No nagging
 
 - The same conflict is announced once per session, and is one record no matter how often it is seen.

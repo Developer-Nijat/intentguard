@@ -115,7 +115,7 @@ Globs relative to the project root, gitignore-flavoured.
 | `src/file-[abc].js`, `src/a?.js` | Character class, single character. |
 | `!**/*.test.js` | A leading `!` excludes. |
 
-An empty scope — or one with only exclusions — means the whole project. Matching is case-insensitive on Windows. Absolute paths and `..` are rejected.
+An empty scope — or one with only exclusions — means the whole project. Matching is case-insensitive on Windows and macOS, where the filesystem is. Absolute paths and `..` are rejected.
 
 ## Detector patterns
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { compileScope, matchesScope, normalizePath, validateGlob } from '../src/core/scope-matcher.js';
+import { caseInsensitivePlatform, compileScope, matchesScope, normalizePath, validateGlob } from '../src/core/scope-matcher.js';
 
 const cs = { nocase: false };
 const yes = (file, globs) => assert.equal(matchesScope(file, globs, cs), true, `${file} should match ${JSON.stringify(globs)}`);
@@ -89,6 +89,14 @@ test('unbalanced braces are treated literally instead of throwing', () => {
 test('case sensitivity is configurable', () => {
   assert.equal(matchesScope('Apps/Web/DB.js', ['apps/web/**'], { nocase: true }), true);
   assert.equal(matchesScope('Apps/Web/DB.js', ['apps/web/**'], { nocase: false }), false);
+});
+
+test('matching ignores case by default wherever the filesystem does', () => {
+  assert.equal(caseInsensitivePlatform('win32'), true);
+  assert.equal(caseInsensitivePlatform('darwin'), true);
+  assert.equal(caseInsensitivePlatform('linux'), false);
+  // On this platform, re-casing a path must not step around a scope unless the filesystem treats it as another file.
+  assert.equal(matchesScope('Apps/Web/DB.js', ['apps/web/**']), caseInsensitivePlatform());
 });
 
 test('validateGlob rejects patterns that escape the project', () => {
